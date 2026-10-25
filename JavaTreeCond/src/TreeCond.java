@@ -16,13 +16,20 @@
 
 import javax.swing.*; // Import the Swing classes
 import javax.swing.tree.*; // Import the Swing tree classes
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import javax.swing.event.*; // Import the Swing event classes
 import java.awt.*; // Import awt classes
 import java.awt.event.*; // for the WindowAdapter and WindowEvent classes
+import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -47,10 +54,10 @@ import java.util.List;
 public class TreeCond extends JApplet {
 	/** コード値条件を表すテキスト */
 	static final String[]	codeString = new String[]{
-			"口座","大分類","中分類","小分類","取引先","周期","Mark"};
+			"口座","大分類","中分類","小分類","取引先","備考","周期","Mark"};
 	/** 名称条件を表すテキスト */
 	static final String[]	likeString = new String[]{
-			"口座","大分類","中分類","小分類","項目","取引先","周期","Mark"};
+			"口座","大分類","中分類","小分類","項目","取引先","備考","周期","Mark"};
 	/** 期間条件の種類を表すテキスト */
 	static final String[]	kknString = new String[]{
 			"日付","数量","金額","YY","YM"};
@@ -105,7 +112,7 @@ public class TreeCond extends JApplet {
 		DefaultMutableTreeNode root = createNewNode(1/* AND */,true/* plain */);
 		treeModel = new DefaultTreeModel(root);
 		tree = new JTree(treeModel);
-
+		
 		/* TreeCellRendererの設定などTreeに対する設定 */
 		tree.setCellRenderer(new CondCellRenderer());
 		tree.addMouseListener(new TreeCondListener()); 
@@ -197,6 +204,27 @@ public class TreeCond extends JApplet {
 			menu = new JMenu("ファイル");
 			menuBar.add(menu);
 	
+			menuItem = menu.add(new JMenuItem("新規"));
+			menuItem.addActionListener(new ActionListener() {
+		    	public void actionPerformed(ActionEvent e) {
+					initTree();
+		    	}
+			});
+	
+			menuItem = menu.add(new JMenuItem("開く"));
+			menuItem.addActionListener(new ActionListener() {
+		    	public void actionPerformed(ActionEvent e) {
+					loadTree(tree);
+		    	}
+			});
+	
+			menuItem = menu.add(new JMenuItem("保存"));
+			menuItem.addActionListener(new ActionListener() {
+		    	public void actionPerformed(ActionEvent e) {
+					saveTree(tree);
+		    	}
+			});
+	
 			menuItem = menu.add(new JMenuItem("終了"));
 			menuItem.addActionListener(new ActionListener() {
 		    	public void actionPerformed(ActionEvent e) {
@@ -223,6 +251,8 @@ public class TreeCond extends JApplet {
 			}
 		});
 
+ 		menu.addSeparator();
+
 		menuItem = menu.add(new JMenuItem("Not ANDフォルダ"));
 		menuItem.addActionListener(new ActionListener(){
 			public void actionPerformed(ActionEvent e){
@@ -234,6 +264,34 @@ public class TreeCond extends JApplet {
 		menuItem.addActionListener(new ActionListener(){
 			public void actionPerformed(ActionEvent e){
 				addFolder(0/* OR */,false/* not */);
+			}
+		});
+
+ 		menu.addSeparator();
+
+		menuItem = menu.add(new JMenuItem("以下をすべて開く"));
+		menuItem.addActionListener(e -> {
+			TreePath path = tree.getSelectionPath();
+			if (path != null) expandAll(tree, path, true);
+		});
+
+		menuItem = menu.add(new JMenuItem("以下をすべて閉じる"));
+		menuItem.addActionListener(e -> {
+			TreePath path = tree.getSelectionPath();
+			if (path != null) expandAll(tree, path, false);
+		});
+
+ 		menu.addSeparator();
+		
+ 		menuItem = menu.add(new JMenuItem("フォルダコメント"));
+ 		menuItem.addActionListener(new ActionListener(){
+			public void actionPerformed(ActionEvent e){
+				changeTitle(container);
+	    		DefaultMutableTreeNode	lastItem = getSelectedNode();
+				if(lastItem != null){
+					// 描画領域を更新するために必要
+					treeModel.nodeChanged(lastItem);
+				}
 			}
 		});
 
@@ -419,7 +477,23 @@ public class TreeCond extends JApplet {
 		}
 		toolkit.beep();
 	}
-	
+
+	protected void changeTitle(Container container) {
+		DefaultMutableTreeNode	lastItem = getSelectedNode();
+		Object					obj;
+
+		if(lastItem != null) {
+			obj = lastItem.getUserObject();
+			if(obj instanceof CondDataFolder){
+				/* 現在のノードがフォルダの場合タイトルを編集する */
+				((CondDataFolder)obj).changeTitle(container);
+//exit_procedure:
+				return;
+			}
+		}
+		toolkit.beep();
+	}
+
 	/**	delFolder:	現在選択されている条件フォルダを削除 */
 	protected void delFolder() {
 	    DefaultMutableTreeNode	lastItem = getSelectedNode();
@@ -505,7 +579,11 @@ public class TreeCond extends JApplet {
 
         private void showPopup(MouseEvent me) {
             if (me.isPopupTrigger()) {
-                popupMenu.show(me.getComponent(),
+ 				int row = tree.getRowForLocation(me.getX(), me.getY());
+				if (row >= 0) {
+					tree.setSelectionRow(row);//右ボタンでクリックした位置のノードを選択する
+				}
+               popupMenu.show(me.getComponent(),
                                me.getX(), me.getY());
             }
         }
@@ -652,7 +730,8 @@ public class TreeCond extends JApplet {
 			SQLString = new String((SQLString!=null?SQLString+folder.toSQLString():"") + condKkn);
 		}
 
-		return	new String(SQLString!=null? (folder.getConnect()?"":" Not ") +"(" + SQLString + ")" : "");
+		return	new String(SQLString!=null? 
+						((folder.getConnect()?"":" Not ") + "(" + (folder.title.length()>0? " -- " + folder.title + "\r\n":"") + SQLString + ")"):"") ;
 	}
 
 	/**	constructMenuBarSQL:	SQL用のメニューバーを作成する	*/
@@ -802,8 +881,7 @@ public class TreeCond extends JApplet {
 				}
 			}
 		});
-
- 		pm.addSeparator();
+		pm.addSeparator();
 
 		menuItem = new JMenuItem("削除");
         pm.add(menuItem);
@@ -892,4 +970,181 @@ public class TreeCond extends JApplet {
 			}
 		}
 	}
+
+
+	  protected void initTree() {
+		/* rootノード(ANDフォルダ)を作成しTreeModel→Tree作成する */
+		DefaultMutableTreeNode root = createNewNode(1/* AND */,true/* plain */);
+		treeModel = new DefaultTreeModel(root);
+		tree.clearSelection();
+		tree.setModel(treeModel);
+		tree.expandPath(new TreePath(root.getPath()));
+		tree.revalidate();
+		tree.repaint();
+	}
+
+	/// ----------------------------------------------------------------------
+	/// Tree → JSON
+    /// <summary>JSON serialization for the condition tree.</summary>
+    protected JSONObject toJson(DefaultMutableTreeNode curNode) {
+        JSONObject jsobj = new JSONObject();
+        Object	obj = curNode.getUserObject();
+        if(obj instanceof CondDataFolder){
+			if(curNode.getChildCount() > 0) {
+				jsobj.put("type", (((CondDataFolder)obj).connFolder==1?"AND":"OR"));
+				jsobj.put("conn", ((CondDataFolder)obj).connect? "Plain" : "Not");
+				jsobj.put("param", ((CondDataFolder)obj).title);
+				JSONArray children = new JSONArray();
+				for (int i = 0; i < curNode.getChildCount(); i++) {
+					children.put(toJson((DefaultMutableTreeNode) curNode.getChildAt(i)));
+				}
+				jsobj.put("children", children);
+			}
+		}else{
+			if (obj instanceof CondDataDocCode) {
+				jsobj.put("type", "Code");
+			}else if (obj instanceof CondDataDocKkn) {
+				jsobj.put("type", "Between");
+			} else {
+				jsobj.put("type", "Like");
+			}
+			jsobj.put("conn", ((CondDataDoc)obj).connect ? "Plain" : "Not");
+			jsobj.put("cond", ((CondDataDoc)obj).cond);
+			if (obj instanceof CondDataDocKkn) {
+				jsobj.put("param", ((CondDataDocKkn)obj).currentValueStart);
+				jsobj.put("param2", ((CondDataDocKkn)obj).currentValueEnd);
+			}else{
+				jsobj.put("param", ((CondDataDoc)obj).currentValue);
+			}
+		}
+        return jsobj;
+    }
+
+    /// <summary>Serialize a tree into a JSON file.</summary>
+    protected void saveTree(JTree tree) {
+        // DefaultMutableTreeNode lastItem = (DefaultMutableTreeNode) tree.getModel().getRoot();
+        DefaultMutableTreeNode	lastItem = getSelectedNode();
+		if( lastItem==null ){
+            JOptionPane.showMessageDialog(null, "フォルダ条件が選択されていません");	
+		}else{
+			Object	obj = lastItem.getUserObject();
+			if(obj instanceof CondDataFolder){
+				if(lastItem.getChildCount()>0){
+					/* フォルダが空でないとき内包のTreeを保存する */
+					String initial = ((CondDataFolder)obj).title.length()<=0 ? "condition.json" : ((CondDataFolder)obj).title + ".json";
+					JFileChooser chooser = new JFileChooser();
+					chooser.setCurrentDirectory(getJarDirectory());
+					chooser.setSelectedFile(new java.io.File(initial));
+					if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return;
+
+					JSONObject json = toJson(lastItem);
+					try {
+						Files.writeString(chooser.getSelectedFile().toPath(),
+								json.toString(2), StandardCharsets.UTF_8);
+					} catch (IOException ex) {
+						JOptionPane.showMessageDialog(null, ex.getMessage());
+					}
+				}else{
+					JOptionPane.showMessageDialog(null, "フォルダ条件が空です");
+				}
+			}else{
+				JOptionPane.showMessageDialog(null, "フォルダ条件を保存することが出来ます");
+			}
+		}
+	}
+
+    /// <summary>Deserialize a JSON object into a tree node.</summary>
+    protected DefaultMutableTreeNode fromJson(JSONObject jsobj) {
+		DefaultMutableTreeNode node = null;
+
+		// typeからFolder,条件の種類を判定し、UserObjectを生成する
+		switch (jsobj.optString("type")) {
+			case "AND":
+			case "OR":
+				CondDataFolder dataFolder = new CondDataFolder(
+						"AND".equals(jsobj.optString("type")) ? 1 : 0,
+						"Plain".equals(jsobj.optString("conn", "Plain")));
+				dataFolder.title = jsobj.optString("param");
+				node = new DefaultMutableTreeNode(dataFolder);
+				if (jsobj.has("children")) {
+					JSONArray children = jsobj.getJSONArray("children");
+					for (int i = 0; i < children.length(); i++) {
+						node.add(fromJson(children.getJSONObject(i)));
+					}
+				}
+				return node;
+			case "Code":
+				CondDataDocCode docCode = new CondDataDocCode(
+						jsobj.optString("cond"),
+						"Plain".equals(jsobj.optString("conn", "Plain")));
+				docCode.currentValue = jsobj.optString("param");
+				node = new DefaultMutableTreeNode(docCode);
+				break;
+			case "Like":
+				CondDataDoc doc = new CondDataDoc(
+						jsobj.optString("cond"),
+						"Plain".equals(jsobj.optString("conn", "Plain")));
+				doc.currentValue = jsobj.optString("param");
+				node = new DefaultMutableTreeNode(doc);
+				break;
+			case "Between":
+				CondDataDocKkn docKkn = new CondDataDocKkn(
+						jsobj.optString("cond"),
+						"Plain".equals(jsobj.optString("conn", "Plain")));
+				docKkn.currentValueStart = jsobj.optString("param");
+				docKkn.currentValueEnd = jsobj.optString("param2");
+				node = new DefaultMutableTreeNode(docKkn);
+				break;
+			default:
+				throw new IllegalArgumentException("Unknown type: " + jsobj.optString("type"));
+		}
+
+        return node;
+    }
+
+    protected void loadTree(JTree tree) {
+        JFileChooser chooser = new JFileChooser();
+		chooser.setCurrentDirectory(getJarDirectory());
+        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return;
+
+        try {
+            String text = Files.readString(chooser.getSelectedFile().toPath(), StandardCharsets.UTF_8);
+            JSONObject json = new JSONObject(text);
+            DefaultMutableTreeNode root = fromJson(json);
+			treeModel = new DefaultTreeModel(root);
+            tree.setModel(treeModel);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(null, ex.getMessage());
+        }
+    }
+
+	protected File getJarDirectory() {
+		try {
+			DefaultMutableTreeNode	lastItem = getSelectedNode();
+			Object	obj = lastItem.getUserObject();
+			var url = obj.getClass().getProtectionDomain().getCodeSource().getLocation();
+			if (url == null) return new File(".").getAbsoluteFile();
+			File loc = new File(url.toURI());
+			// ファイルならその親
+			return loc.isFile() ? loc.getParentFile() : loc;
+		} catch (Exception e) {
+			return new File(".").getAbsoluteFile();
+		}
+	}
+
+	void expandAll(JTree tree, TreePath parent, boolean expand) {
+		TreeNode node = (TreeNode) parent.getLastPathComponent();
+		if (node.getChildCount() > 0) {
+			for (int i = 0; i < node.getChildCount(); i++) {
+				TreeNode child = node.getChildAt(i);
+				expandAll(tree, parent.pathByAddingChild(child), expand);
+			}
+		}
+		if (expand) {
+			tree.expandPath(parent);
+		} else {
+			tree.collapsePath(parent);
+		}
+	}
 }
+
